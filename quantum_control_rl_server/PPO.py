@@ -196,11 +196,6 @@ def train_eval(
                 fc_layer_params = value_fc_layers)
 
         # Create PPO agent
-        global tf_agent
-        global eval_policy
-        global collect_policy
-        #global collect_driver
-        #global eval_driver
 
         optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=lr)
         tf_agent = ppo_agent.PPOAgent(
@@ -309,9 +304,6 @@ def train_eval(
             train_loss = train_step()
             replay_buffer.clear()
             train_timer.stop()
-
-            #if h5datalog is not None:
-            #    h5datalog.save_driver_data(collect_driver,'training', time_step = this_time_step, rl_params = rl_params)
 
             if (epoch % eval_interval == 0) and do_evaluation:
                 # Evaluate the policy

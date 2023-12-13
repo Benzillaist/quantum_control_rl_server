@@ -70,7 +70,7 @@ class h5log:
             scales[key] = np.expand_dims((policy_dist_dict[key]['scale'].numpy()[0]*rl_params['action_scale'][key]),0)
         return locs, scales
 
-    def save_driver_data(self, driver, epoch_type, time_step = None, rl_params = None):
+    def save_driver_data(self, driver, epoch_type):
         # saves relevant data from RL episode driver
         # (collect_driver for training epochs, eval_driver for evaluation epochs)
         # epoch_type = str, 'evaluation' or 'training'
