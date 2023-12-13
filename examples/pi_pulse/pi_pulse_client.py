@@ -44,9 +44,26 @@ while not done:
         break
 
     # parsing message (see tf_env -> reward_remote())
+    epoch_type = message['epoch_type']
+
+    if epoch_type == 'final':
+        logger.info('Final Epoch')
+
+        locs = message['locs']
+        scales = message['scales']
+        for key in locs.keys():
+            logger.info('locs['+str(key)+']:')
+            logger.info(locs[key][0])
+            logger.info('scales['+str(key)+']:')
+            logger.info(scales[key][0])
+
+        # After using the locs and scales, terminate training
+        done = True
+        logger.info('Training finished.')
+        break
+
     action_batch = message['action_batch']
     batch_size = message['batch_size']
-    epoch_type = message['epoch_type']
     epoch = message['epoch']
 
     # parsing action_batch and reshaping to get rid of nested
@@ -68,6 +85,17 @@ while not done:
             reward_data[ii] = pi_pulse_sim(amplitudes[ii],drags[ii],detunings[ii])
         elif epoch_type == 'training':
             reward_data[ii] = pi_pulse_sim(amplitudes[ii],drags[ii],detunings[ii])
+        # elif epoch_type == 'final':
+        #     print('Got to final epoch!')
+        #     print('amplitudes:')
+        #     print(amplitudes)
+        #     print('drags:')
+        #     print(drags)
+        #     print('detunings:')
+        #     print(detunings)
+        #     done = True
+        #     logger.info('Training finished.')
+        #     break
         
     # Print mean and stdev of reward for monitoring progress
     R = np.mean(reward_data) 

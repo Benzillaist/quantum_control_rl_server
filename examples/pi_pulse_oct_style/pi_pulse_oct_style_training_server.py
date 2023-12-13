@@ -19,8 +19,8 @@ import numpy as np
 root_dir = os.getcwd() #r'E:\rl_data\exp_training\pi_pulse'
 host_ip = '127.0.0.1' # ip address of RL server, here it's hosted locally
 
-num_epochs = 1000 # total number of training epochs
-train_batch_size = 50 # number of batches to send for training epoch
+num_epochs = 100 # total number of training epochs
+train_batch_size = 20 # number of batches to send for training epoch
 
 do_evaluation = True # flag for implementing eval epochs or not
 eval_interval = 20 # number of training epochs between eval epochs
@@ -157,6 +157,7 @@ PPO.train_eval(
     actor_lstm_size = (12,),
     value_lstm_size = (12,),
     h5datalog = log,
-    save_tf_style = save_tf_style)
+    save_tf_style = save_tf_style,
+    rl_params = rl_params)
 
 # %%

@@ -60,6 +60,7 @@ def train_eval(
         value_lstm_size = (12,),
         h5datalog = None, 
         save_tf_style = True,
+        rl_params = None,
         **kwargs):
     """ A simple train and eval for PPO agent.
 
@@ -195,6 +196,12 @@ def train_eval(
                 fc_layer_params = value_fc_layers)
 
         # Create PPO agent
+        global tf_agent
+        global eval_policy
+        global collect_policy
+        #global collect_driver
+        #global eval_driver
+
         optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=lr)
         tf_agent = ppo_agent.PPOAgent(
             time_step_spec = collect_driver.time_step_spec(),
@@ -284,7 +291,6 @@ def train_eval(
         train_timer = timer.Timer()
         experience_timer = timer.Timer()
 
-
         #all_policy_dists = None
         for epoch in range(1,num_epochs+1):
             # Collect new experience
@@ -292,8 +298,10 @@ def train_eval(
             this_time_step,this_policy_state = collect_driver.run()
             experience_timer.stop()
 
+                
             if h5datalog is not None:
-                h5datalog.save_driver_data(collect_driver,'training')
+                h5datalog.save_driver_data(collect_driver,'training') # saves actions from the epoch that just ran
+                h5datalog.save_policy_distribution(collect_driver, time_step = this_time_step, rl_params = rl_params) # saves policy dist from the epoch that just ran
 
             # Update the policy
             train_timer.start()
@@ -301,6 +309,9 @@ def train_eval(
             train_loss = train_step()
             replay_buffer.clear()
             train_timer.stop()
+
+            #if h5datalog is not None:
+            #    h5datalog.save_driver_data(collect_driver,'training', time_step = this_time_step, rl_params = rl_params)
 
             if (epoch % eval_interval == 0) and do_evaluation:
                 # Evaluate the policy
@@ -324,7 +335,7 @@ def train_eval(
                 log['returns'].append(avg_return)
                 log['experience_time'].append(experience_timer.value())
                 log['train_time'].append(train_timer.value())
-
+                
 
             if save_tf_style:
                 if epoch % save_interval == 0:
@@ -336,5 +347,21 @@ def train_eval(
                     epoch % checkpoint_interval == 0:
                         # Save training checkpoint
                         train_checkpointer.save(global_step)
+
+        # save policy dist after final epoch (post-updating)
+        if h5datalog is not None:
+            h5datalog.save_policy_distribution(collect_driver, time_step = this_time_step, rl_params = rl_params)
+
+        # End training by sending the mean (loc) and stdev (scale) of the policy distribution to the client
+        locs, scales = h5datalog.parse_policy_distribution(collect_driver, time_step = this_time_step, rl_params = rl_params)
+        final_message = dict(
+                locs=locs,
+                scales=scales,
+                epoch_type='final',
+                )
+        eval_driver.env.server_socket.send_data(final_message)
+
         collect_driver.finish_training()
         eval_driver.finish_training()
+
+

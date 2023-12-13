@@ -44,9 +44,26 @@ while not done:
         break
 
     # parsing message (see tf_env -> reward_remote())
+    epoch_type = message['epoch_type']
+    
+    if epoch_type == 'final':
+        logger.info('Final Epoch')
+
+        locs = message['locs']
+        scales = message['scales']
+        for key in locs.keys():
+            logger.info('locs['+str(key)+']:')
+            logger.info(locs[key][0])
+            logger.info('scales['+str(key)+']:')
+            logger.info(scales[key][0])
+
+        # After using the locs and scales, terminate training
+        done = True
+        logger.info('Training finished.')
+        break
+
     action_batch = message['action_batch']
     batch_size = message['batch_size']
-    epoch_type = message['epoch_type']
     epoch = message['epoch']
 
     # parsing action_batch and reshaping to get rid of nested
@@ -61,6 +78,7 @@ while not done:
 
 
     logger.info('Start %s epoch %d' %(epoch_type, epoch))
+
 
     # collecting rewards for each policy in the batch
     reward_data = np.zeros((batch_size))

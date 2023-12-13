@@ -52,6 +52,8 @@ class h5log:
             action_name : np.expand_dims(np.squeeze(np.array(action_history)[1:]),0)
             for action_name, action_history in driver._env.history.items()
             }
+        #print('actions in parse_actions()')
+        #print(actions)
         return actions
     
     def parse_reward(self, driver):
@@ -59,7 +61,16 @@ class h5log:
         reward = np.expand_dims(driver._env._episode_return.numpy(),axis=0)
         return reward
 
-    def save_driver_data(self, driver, epoch_type):
+    def parse_policy_distribution(self, collect_driver, time_step, rl_params):
+        policy_dist_dict = collect_driver._policy.distribution(time_step).info['dist_params']
+        locs = {}
+        scales = {}
+        for key in policy_dist_dict.keys():
+            locs[key] = np.expand_dims(rl_params['action_script'][key].numpy()[0] + (policy_dist_dict[key]['loc'].numpy()[0]*rl_params['action_scale'][key]),0)
+            scales[key] = np.expand_dims((policy_dist_dict[key]['scale'].numpy()[0]*rl_params['action_scale'][key]),0)
+        return locs, scales
+
+    def save_driver_data(self, driver, epoch_type, time_step = None, rl_params = None):
         # saves relevant data from RL episode driver
         # (collect_driver for training epochs, eval_driver for evaluation epochs)
         # epoch_type = str, 'evaluation' or 'training'
@@ -91,6 +102,45 @@ class h5log:
             else:
                 action_group[action_name].resize(action_group[action_name].shape[0]+1,axis=0)
                 action_group[action_name][-1] = array
+
+
+    def save_policy_distribution(self, collect_driver, time_step = None, rl_params = None):
+        # saves policy distribution from the collect driver
+        # needs rl_params['action_script'] and rl_params['action_scale']
+        # time_step = tensorflow object returned after running the driver each epoch
+
+        these_actions = self.parse_actions(collect_driver)
+        this_reward = self.parse_reward(collect_driver)
+        
+        f = h5py.File(self.filename)
+        g = f[self.group_name]
+        h = g.require_group('policy_distribution') # creates subgroup if it doesn't exist, otherwise returns the subgroup
+
+        locs, scales = self.parse_policy_distribution(collect_driver, time_step, rl_params)
+        
+        loc_group = h.require_group('locs')
+        for action_name in locs.keys():
+            array = locs[action_name]
+            if action_name not in loc_group.keys():
+                loc_group.create_dataset(action_name,
+                                            data = array,
+                                            maxshape = (None,)+array.shape[1:]
+                                            )
+            else:
+                loc_group[action_name].resize(loc_group[action_name].shape[0]+1,axis=0)
+                loc_group[action_name][-1] = array
+                
+        scale_group = h.require_group('scales')
+        for action_name in scales.keys():
+            array = scales[action_name]
+            if action_name not in scale_group.keys():
+                scale_group.create_dataset(action_name,
+                                            data = array,
+                                            maxshape = (None,)+array.shape[1:]
+                                            )
+            else:
+                scale_group[action_name].resize(scale_group[action_name].shape[0]+1,axis=0)
+                scale_group[action_name][-1] = array
 
         f.close()
 

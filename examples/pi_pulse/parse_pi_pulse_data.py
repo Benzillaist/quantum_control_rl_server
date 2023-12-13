@@ -50,15 +50,17 @@ max_infidelity = np.amax(infidelity,axis=1)
 fig,ax = plt.subplots(1,1)
 ax.plot(epochs,mean_infidelity)
 ax.fill_between(epochs,
-                mean_infidelity-min_infidelity,
-                mean_infidelity+max_infidelity,
+                min_infidelity,
+                max_infidelity,
                 alpha = 0.5)
 ax.set_xlabel('Epoch')
-ax.set_ylabel('Infidelity')
+ax.set_ylabel('1-P(e)')
 ax.set_yscale('log')
 plt.show()
 
 # %%
+
+
 
 mean_amp = np.mean(training_actions['amp'],axis=1)
 stdev_amp = np.std(training_actions['amp'],axis=1)
