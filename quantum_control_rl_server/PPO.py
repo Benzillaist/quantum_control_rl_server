@@ -351,7 +351,8 @@ def train_eval(
                 scales=scales,
                 epoch_type='final',
                 )
-        eval_driver.env.server_socket.send_data(final_message)
+                
+        collect_driver.env.server_socket.send_data(final_message)
 
         collect_driver.finish_training()
         eval_driver.finish_training()
