@@ -122,3 +122,10 @@ logdir/
 .gitconfig
 
 
+/examples/ctrl_vqe_pi_pulse_sim/save_data/
+/examples/ctrl_vqe_state_prep/save_data/
+/examples/ctrl_vqe_state_prep/train_summaries/
+/examples/ctrl_vqe_pi_pulse_sim/train_summaries/
+/examples/pi_pulse/train_summaries/
+/examples/train_summaries/
+/examples/pi_pulse_oct_style/train_summaries/
