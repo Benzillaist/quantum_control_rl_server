@@ -45,6 +45,8 @@ action_script = {
   'pulse_array_real' : [init_pulse_real], # shape=[n_array_vals]
   'pulse_array_imag' : [init_pulse_imag]
   }
+print(f'action_script: {action_script}')
+
 
 # specify shapes of actions to be consistent with the objects in action_script
 action_spec = {

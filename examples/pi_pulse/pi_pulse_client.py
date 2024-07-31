@@ -15,6 +15,11 @@ import sys
 
 import logging
 import time
+
+from quantum_control_rl_server.remote_env_tools import Client
+
+from pi_pulse_sim_function import pi_pulse_sim
+
 logger = logging.getLogger('RL')
 logger.propagate = False
 logger.handlers = []
@@ -22,9 +27,6 @@ stream_handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(stream_handler)
 logger.setLevel(logging.INFO)
 
-from quantum_control_rl_server.remote_env_tools import Client
-
-from pi_pulse_sim_function import pi_pulse_sim
 
 client_socket = Client()
 (host, port) = '127.0.0.1', 5555 # ip address of RL server, here it's hosted locally

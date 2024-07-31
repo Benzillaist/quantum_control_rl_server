@@ -8,7 +8,7 @@ import h5py
 import os
 
 root_dir = os.getcwd()
-filename = root_dir+r'\20230504.h5'
+filename = root_dir+r'\examples\pi_pulse\20240727-002521.h5'
 run = '0'
 
 f = h5py.File(filename,'r')

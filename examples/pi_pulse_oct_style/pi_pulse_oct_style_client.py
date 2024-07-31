@@ -69,12 +69,16 @@ while not done:
     # parsing action_batch and reshaping to get rid of nested
     # structure required by tensorflow
     # here env.T=1 so the shape is (batch_size,1,pulse_len)
+    print(f'pulse_array_real: {action_batch["pulse_array_real"]}')
+    print(f'pulse_array_real shape: {action_batch["pulse_array_real"].shape}')
     new_shape_list_real = list(action_batch['pulse_array_real'].shape)
     new_shape_list_imag = list(action_batch['pulse_array_imag'].shape)
     new_shape_list_real.pop(1)
     new_shape_list_imag.pop(1)
     real_pulses = action_batch['pulse_array_real'].reshape(new_shape_list_real)
     imag_pulses = action_batch['pulse_array_imag'].reshape(new_shape_list_imag)
+    print(f'real_pulses: {real_pulses}')
+    print(f'imag_pulses: {imag_pulses}')
 
 
     logger.info('Start %s epoch %d' %(epoch_type, epoch))

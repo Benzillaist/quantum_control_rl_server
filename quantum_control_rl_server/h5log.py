@@ -5,7 +5,45 @@ import h5py
 import os
 import time
 import numpy as np
+from datetime import datetime
+from os import path, makedirs
 
+def save_data(self, data, name: str, file_name: str, root_folder: str = r'C:\_Data\datasets') -> None:
+    """
+    :param data:
+    :param name:
+    :param file_name:
+    :param root_folder:
+
+    :return:
+    """
+    # Get running time string
+    date_str = datetime.now().strftime("%Y%m%d")
+    time_str = datetime.now().strftime("%H%M%S")
+
+    file_path = path.join(root_folder, f"{file_name}.h5")
+
+    makedirs(root_folder, exist_ok=True)
+
+    def group_exists(h5_file, group_name):
+        return group_name in h5_file
+
+    with h5py.File(file_path, 'a') as file:
+        if not group_exists(file, date_str):
+            date_group = file.create_group(date_str)
+        else:
+            date_group = file[date_str]
+
+        expt_str = f"{time_str}_{name}"
+        if not group_exists(date_group, expt_str):
+            expt_group = date_group.create_group(expt_str)
+        elif not group_exists(date_group, expt_str + "_1"):
+            expt_group = date_group.create_group(expt_str + "_1")
+        else:
+            expt_group = date_group.create_group(expt_str + "_2")
+
+        for key, value in data.items():
+            expt_group.create_dataset(key, data=value)
 
 def set_attrs(g, kwargs):
     # recursive function for storing nested dicts
@@ -19,7 +57,7 @@ def set_attrs(g, kwargs):
 
 class h5log:
 
-    def __init__(self, dir, rl_params={}):
+    def __init__(self, dir, rl_params={}, name=None):
         # dir = str, directory where h5 file will be located
         # rl_params = dict containing params for training server
 
@@ -27,7 +65,10 @@ class h5log:
         if not os.path.isdir(self.dir):
             os.mkdir(self.dir)
 
-        self.filename = os.path.join(self.dir,time.strftime('%Y%m%d.h5'))
+        if name is None:
+            self.filename = os.path.join(self.dir, time.strftime('%Y%m%d-%H%M%S.h5'))
+        else:
+            self.filename = os.path.join(self.dir, name)
         f = h5py.File(self.filename)
         if f.keys():
             keys = [k for k in f.keys() if k.isdigit()]
@@ -48,12 +89,19 @@ class h5log:
         
     def parse_actions(self, driver):
         # expand_dims is used to add a dimension for epoch number
+        # print(f'drive._env.history.items(): {driver._env.history.items()}')
+        # for action_name, action_history in driver._env.history.items():
+            # print(f'action_history: {action_history}')
+            # print(f'a: {np.array(action_history, dtype=np.float32)}')
+            # print(f'b: {np.squeeze(np.array(action_history, dtype=np.float32)[1:])}')
+            # print(f'c: {np.expand_dims(np.squeeze(np.array(action_history, dtype=np.float32)[1:]),0)}')
         actions = {
-            action_name : np.expand_dims(np.squeeze(np.array(action_history)[1:]),0)
+            action_name : np.expand_dims(np.squeeze(np.array(action_history, dtype=np.float32)[1:]),0)
             for action_name, action_history in driver._env.history.items()
             }
         #print('actions in parse_actions()')
         #print(actions)
+        # print('actions: {actions}')
         return actions
     
     def parse_reward(self, driver):
@@ -76,6 +124,7 @@ class h5log:
         # epoch_type = str, 'evaluation' or 'training'
 
         these_actions = self.parse_actions(driver)
+        # print(f'these_actions: {these_actions}')
         this_reward = self.parse_reward(driver)
         
         f = h5py.File(self.filename)
@@ -95,6 +144,10 @@ class h5log:
         action_group = h.require_group('actions')
         for action_name, array in these_actions.items():
             if action_name not in action_group.keys():
+                # print(f'data type: {type(array)}')
+                # print(f'data type [0]: {type(float(array[0]))}')
+                # print(f'data array dtype: {array.dtype}')
+                # print(f'data: {array}')
                 action_group.create_dataset(action_name,
                                             data = array,
                                             maxshape = (None,)+array.shape[1:]

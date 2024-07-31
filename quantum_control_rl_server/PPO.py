@@ -260,6 +260,7 @@ def train_eval(
         if do_evaluation:
             eval_driver.run()
             if h5datalog is not None:
+                print(f'eval_driver: {eval_driver}')
                 h5datalog.save_driver_data(eval_driver,'evaluation')
             avg_return = avg_return_metric.result().numpy()
             avg_return_metric.reset()
