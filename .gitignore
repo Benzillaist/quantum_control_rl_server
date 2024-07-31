@@ -122,3 +122,8 @@ logdir/
 .gitconfig
 
 
+/.idea
+*.h5
+*.v2
+/examples/ctrl_vqe_pi_pulse_sim/temp_files
+/examples/ctrl_vqe_state_prep/temp_files
