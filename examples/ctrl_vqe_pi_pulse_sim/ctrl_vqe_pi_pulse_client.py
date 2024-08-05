@@ -22,10 +22,14 @@ def cost_q_e(final_expect, final_dm):
     return(final_expect[0])
 
 def cost_qA_g1(final_expect, final_dm):
-    return np.abs(final_dm.full()[1][1])
+    return np.abs(final_dm.full()[1][0])
 
 def cost_qAB_g11(final_expect, final_dm):
     return np.abs(final_dm.full()[7][0])
+
+def cost_qAB_g11_n(final_expect, final_dm):
+    noise = (np.random.rand(1)[0] * 0.04) - 0.02
+    return np.abs(final_dm.full()[7][0]) + noise
 
 cf_name = "temp_files/client_args.txt"
 with open(cf_name, "rb") as fp:
