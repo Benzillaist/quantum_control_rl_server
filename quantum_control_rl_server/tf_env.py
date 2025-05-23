@@ -64,7 +64,8 @@ class TFEnvironmentQuantumControl(tf_environment.TFEnvironment):
         """
         Execute one time step in the environment.
 
-        Input:
+        Input:                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            `0=/+
+        +
             action -- dictionary of batched actions
 
         Output:

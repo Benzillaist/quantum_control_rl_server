@@ -259,7 +259,7 @@ class PulseSequences:
         # end - done
         return stream
 
-    def colors(ch):
+    def colors(self, ch):
         """
         Just a list of colors, useful for making a graph and wanting some colors to be the same and others to be different
 

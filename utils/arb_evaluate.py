@@ -25,6 +25,7 @@ class ArbPulseProg(AveragerProgram):
         """
         self.soccfg = soccfg
         self.config = ConfigObj(config=config)
+        self.prep_pulses = array([], dtype=dict)
         self.ctrl_pulses = array([], dtype=dict)
         self.obs_pulses = array([], dtype=dict)
         super().__init__(soccfg=soccfg, cfg=config["expt"])
@@ -32,6 +33,7 @@ class ArbPulseProg(AveragerProgram):
     def initialize(self):
         config = self.config
 
+        # Tracks waveform names registered to avoid multiple redefinitions of the same pulse
         waveform_names = []
 
         # Readout channel
@@ -53,6 +55,37 @@ class ArbPulseProg(AveragerProgram):
         # Loops through sub dictionaries and checks for any pulses
         channel_names = np.array(list(config.__dict__.keys()))
 
+        # TODO: WIP
+        # State preparation pulses
+        for pulse in config.preparation_pulses:  # yeah, it's weird, but this is a lot easier than treating the dict as an object
+            if pulse is not None:
+                # Turns pulse into an object (idk if this helps, possibly remove)
+                pulse = ConfigObj(pulse)
+                # Set waveforms for respective channel
+                waveform_name = pulse.name
+
+                if waveform_name not in waveform_names:
+                    self.add_gauss(ch=pulse.ch, name=waveform_name,
+                                   sigma=self.soccfg.us2cycles(us=pulse.sigma, gen_ch=pulse.ch),
+                                   length=(self.soccfg.us2cycles(us=pulse.sigma, gen_ch=pulse.ch) * 4))
+                    waveform_names.append(waveform_name)
+
+                t_temp = 0
+                if type(t_temp) == "int":
+                    t_temp = self.soccfg.us2cycles(pulse.t, gen_ch=pulse.ch)
+                else:
+                    t_temp = pulse.t
+                # Adds to the list of pulses that should be played later
+                self.prep_pulses = append(self.prep_pulses, ConfigObj({'ch': pulse.ch, 'waveform': waveform_name,
+                                                                     'gain': pulse.gain,
+                                                                     'freq': self.soccfg.freq2reg(f=pulse.freq,
+                                                                                                  gen_ch=pulse.ch),
+                                                                     'phase': self.soccfg.deg2reg(deg=pulse.phase,
+                                                                                                  gen_ch=pulse.ch),
+                                                                     't': t_temp}))
+
+
+        # Control / state modification pulses
         for channel_name in channel_names[channel_names != 'dict']:
             channel = getattr(config, channel_name)
             if hasattr(channel, 'pulses'):
@@ -88,7 +121,6 @@ class ArbPulseProg(AveragerProgram):
                 waveform_name = pulse.name
 
                 if waveform_name not in waveform_names:
-                    print()
                     self.add_gauss(ch=pulse.ch, name=waveform_name,
                                    sigma=self.soccfg.us2cycles(us=pulse.sigma, gen_ch=pulse.ch),
                                    length=(self.soccfg.us2cycles(us=pulse.sigma, gen_ch=pulse.ch) * 4))
@@ -112,8 +144,19 @@ class ArbPulseProg(AveragerProgram):
         self.sync_all(t=430)
 
     def body(self):
+        prep_pulses = self.prep_pulses
         ctrl_pulses = self.ctrl_pulses
         obs_pulses = self.obs_pulses
+
+        # Preparing to readout arbitrary observable
+        for pulse in prep_pulses:
+            # Setting pulse registers for observable preparation pulses
+            self.set_pulse_registers(ch=pulse.ch, style="arb",
+                                     freq=pulse.freq, phase=pulse.phase, gain=pulse.gain,
+                                     waveform=pulse.waveform)
+            # Play arbitrary state preparation pulse
+            self.pulse(ch=pulse.ch, t=pulse.t)
+            self.sync_all(self.us2cycles(0.05))  # align channels and wait 50ns
 
         # Plays all pulses included in the dict
         for pulse in ctrl_pulses:
@@ -141,6 +184,15 @@ class ArbPulseProg(AveragerProgram):
                      adcs=[self.config.readout.ch],
                      adc_trig_offset=self.config.readout.adc_trig_offset,
                      wait=True, syncdelay=self.soccfg.us2cycles(self.config.readout.relax_delay))
+
+    def acquire_shots(self, soc, load_pulses=True, progress=False, **kwargs):
+        super().acquire(soc, load_pulses=load_pulses, progress=progress, **kwargs)
+        return self.collect_shots()
+
+    def collect_shots(self):
+        shots_i = self.di_buf[0].reshape((self.config.expt.expts, self.config.expt.reps)) / self.soccfg.us2cycles(self.config.readout.length)
+        shots_q = self.dq_buf[0].reshape((self.config.expt.expts, self.config.expt.reps)) / self.soccfg.us2cycles(self.config.readout.length)
+        return shots_i, shots_q
 
 
 class ArbitraryEvaluate(Operations):
@@ -180,7 +232,7 @@ class ArbitraryEvaluate(Operations):
 
         return obj_temp
 
-    def run(self, load_pulses: bool = True, progress: bool = False, **kwargs) -> [float, float]:
+    def run(self, load_pulses: bool = True, progress: bool = False, all_shots: bool = False, **kwargs) -> [float, float]:
         """
         Run experiment and auto save configuration, figure and raw data
 
@@ -191,10 +243,16 @@ class ArbitraryEvaluate(Operations):
         :return: Averaged I and Q values
         """
         # Save configuration
-        self.save_configuration(config=self.config, name="arb_execute")
+        # self.save_configuration(config=self.config, name="arb_execute")
 
         # Create and run QiCK program
         obj_temp = self.create(config=self.config)
-        avgi, avgq = obj_temp.acquire(soc=self.soc, load_pulses=load_pulses, progress=progress, **kwargs)
 
-        return avgi[0][0], avgq[0][0]
+        if all_shots:
+            avgi, avgq = obj_temp.acquire_shots(soc=self.soc, load_pulses=load_pulses, progress=progress, **kwargs)
+
+            return avgi, avgq
+        else:
+            avgi, avgq = obj_temp.acquire(soc=self.soc, load_pulses=load_pulses, progress=progress, **kwargs)
+
+            return avgi[0][0], avgq[0][0]

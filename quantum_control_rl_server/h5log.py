@@ -69,7 +69,9 @@ class h5log:
             self.filename = os.path.join(self.dir, time.strftime('%Y%m%d-%H%M%S.h5'))
         else:
             self.filename = os.path.join(self.dir, name)
+        print("About to make file")
         f = h5py.File(self.filename)
+        print(f'Made file: {self.filename}')
         if f.keys():
             keys = [k for k in f.keys() if k.isdigit()]
             group_name = str(max(map(int, keys)) + 1)
@@ -95,6 +97,11 @@ class h5log:
             # print(f'a: {np.array(action_history, dtype=np.float32)}')
             # print(f'b: {np.squeeze(np.array(action_history, dtype=np.float32)[1:])}')
             # print(f'c: {np.expand_dims(np.squeeze(np.array(action_history, dtype=np.float32)[1:]),0)}')
+        # print(f'DSAVED DATA: {driver._env.history.items()}')
+        # for action_name, action_history in driver._env.history.items():
+            # print(f'action_name: {action_name}')
+            # print(f'action_history: {action_history}')
+            # print(f'ya: {np.expand_dims(np.squeeze(np.array(action_history, dtype=np.float32)[1:]),0)}')
         actions = {
             action_name : np.expand_dims(np.squeeze(np.array(action_history, dtype=np.float32)[1:]),0)
             for action_name, action_history in driver._env.history.items()

@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="qick" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="qcrl-server" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (quantum_control_rl_server)" project-jdk-type="Python SDK" />
 </project>

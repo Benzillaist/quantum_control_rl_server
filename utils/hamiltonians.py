@@ -1,11 +1,12 @@
 from utils.arb_evaluate import ArbitraryEvaluate
 import numpy as np
-from utils import Operations, ConfigObj
+from utils.operations import Operations
 from utils.pulse_sequences import PulseSequences
 
 
 class ArbHamiltonianEval(Operations):
-    def __init__(self, soc, soccfg, config: dict, observable_dicts=[], wavefunc_gen=None):
+    def __init__(self, soc, soccfg, config: dict, preparation_pulses=[], observable_dicts=[], wavefunc_gen=None):
+
         """
         Initializes values for Hamiltonian object, calculates the wave function needed to evaluate the given
         observables for the Hamiltonian and wave function.
@@ -33,8 +34,12 @@ class ArbHamiltonianEval(Operations):
         # Holds information to be used later
         self.soc = soc
         self.soccfg = soccfg
+
+        # Add state preparation pulses to config:
+        config["preparation_pulses"] = preparation_pulses
         self.config = config
         # self.coeffs = coeffs
+
         self.observable_dicts = observable_dicts
         self.wavefunc_gen = wavefunc_gen
         self.observables = []
@@ -69,7 +74,7 @@ class ArbHamiltonianEval(Operations):
         #     else:
         #         raise Exception("Unrecognized operator, try again >:)")
 
-    def measure(self, save=True, progress=False):
+    def measure(self, save=True, progress=False, all_shots=False):
         """
         Returns a list of the Hamiltonian operators and wavefunction operators as previously defined
         For each wavefunction's I and Q data within the dictionary, each index relates to 0.145321801 ns worth of pulse time on the ZCU 216 QiCK board, length must be divisible by 16.
@@ -100,7 +105,7 @@ class ArbHamiltonianEval(Operations):
             prog_obj = ArbitraryEvaluate(soc=self.soc, soccfg=self.soccfg, config=self.config)
 
             # Run QiCK program
-            avgi, avgq = prog_obj.run(progress=progress)
+            avgi, avgq = prog_obj.run(progress=progress, all_shots=all_shots)
 
             # Save averages for each observable by appending to list
             avgi_list.append(avgi)
@@ -115,8 +120,8 @@ class ArbHamiltonianEval(Operations):
             data_dict = {"avgi": avgi_arr, "avgq": avgq_arr}
             self.save_data(data=data_dict, name="arb_evaluate_measure", file_name=self.config["expt"]["hdf5"])
 
-        print(avgi_arr)
-        print(avgq_arr)
+        print(f'avgi_arr: {avgi_arr}')
+        print(f'avgq_arr: {avgq_arr}')
 
         return avgi_arr, avgq_arr
 
@@ -307,3 +312,78 @@ class ConstructWaveform:
         self.base_func = base_func
         self.length = length
         self.num_segs = num_segs
+
+# class ArbSimEval(Operations):
+#
+#     def __init__(self, H_r, init_state, drive_ops, c_ops, eval_ops, sim_options, op_t_arr, eval_t_arr):
+#         self.H_r = H_r
+#         self.init_state = init_state
+#         self.drive_ops = drive_ops
+#         self.c_ops = c_ops
+#         self.eval_ops = eval_ops
+#         self.sim_options = sim_options
+#         self.op_t_arr = op_t_arr
+#         self.eval_t_arr = eval_t_arr
+#
+#         self.pulse_amps = []
+#         for i in range(len(drive_ops)):
+#             self.pulse_amps.append(np.zeros(len(op_t_arr)))
+#
+#
+#     def measure(self, save=True, progress=False):
+#
+#     def expect(self, save=True, progress=False, self_project=False):
+#
+#     def gauss_amps(self, ch, sigma, length):
+#
+#     def add_test_waveform(self, ch, *args):
+#         """
+#                 Adds a waveform to the specified channel.
+#
+#                 :param ch: Channel to play pulse on
+#                 :param args: Contains either a dict containing the name, I, Q, gain, freq, phase, and t, or variables defining that
+#                 :return:
+#                 """
+#
+#         if len(args) == 1:
+#             if self.pulse_amps[ch] == 0:
+#                 self.pulse_amps[ch] = args[0]
+#             else:
+#
+#         else:
+#             self.pulse_amps[ch] = {
+#                 "I": args[1],
+#                 "Q": args[2],
+#                 "gain": args[3],
+#                 "freq": args[4],
+#                 "phase": args[5],
+#                 "t": args[6]
+#             }
+#     def set_test_waveform(self, ch, pulse_id, *args):
+#         """
+#                 Can break easily, use with caution
+#
+#                 :param ch: Channel to play pulse on
+#                 :param pulse_id: Pulse ID to modify, careful when keeping track of this  TODO: add cases to manage incorrect IDs
+#                 :param args: Contains either a dict containing the name, I, Q, gain, freq, phase, and t, or variables defining that
+#                 :return:
+#                 """
+#
+#         if len(args) == 1:
+#             self.config[self.channel_ids[ch]]["pulses"][pulse_id] = args[0]
+#         else:
+#             self.config[self.channel_ids[ch]]["pulses"][pulse_id] = {
+#                 "name": args[0],
+#                 "I": args[1],
+#                 "Q": args[2],
+#                 "gain": args[3],
+#                 "freq": args[4],
+#                 "phase": args[5],
+#                 "t": args[6]
+#             }
+#
+#     def clear_test_waveform(self, chs=None):
+#
+#     def pulse_view(self, title="", n=0, save=True):
+#
+#     def construct_waveform(self, soccfg, base_func, length, num_segs):

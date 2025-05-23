@@ -3,6 +3,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qutip import tensor, destroy, qeye, sigmax, sigmaz, basis, mesolve
 from IPython.display import clear_output
+import scipy.interpolate as inte
+from math import floor
+from qutip import mesolve, QobjEvo
+import utils.pulse_configs as pc
+from utils.hamiltonians import ArbHamiltonianEval
+from qick import QickConfig
+import Pyro4
+import copy
+from scipy.optimize import curve_fit
+import time
+import os
 
 def reg_ops(n_elem, N):
     r_ops = []
@@ -92,21 +103,43 @@ def rect_seg(amp, ti, tf):
     return pulse_helper
 
 
+def interp_seg(amps, times):
+
+    spline = inte.CubicSpline(times, amps, bc_type='clamped')
+    ti, tf = times
+    def pulse_helper(t):
+        if not isinstance(t, np.ndarray):
+            t = np.array(t)
+        tc = np.zeros(np.shape(t))
+        tc[(t >= ti) & (t <= tf)] = spline(t[(t >= ti) & (t <= tf)])
+        return tc
+
+    return pulse_helper
+
+
+
 def gauss_seg(amp, sig, ti, tf, C=0):
     def pulse_helper(t):
         if not isinstance(t, np.ndarray):
             t = np.array(t)
-        return amp * np.exp(-(t - ((tf + ti) / 2)) ** 2 / (2 * sig ** 2)) + C
+        tc = np.zeros(np.shape(t))
+        t_inc = t[(t >= ti) & (t <= tf)]
+        # print(f'len(tc): {len(tc)}')
+        # print(f'len(t_inc): {len(t_inc)}')
+        tc[(t >= ti) & (t <= tf)] = amp * np.exp(-(t_inc - ((tf + ti) / 2)) ** 2 / (2 * sig ** 2)) + C
+        return tc
 
     return pulse_helper
 
 
 def drive_osc_camp(amp_func, phase_func, w0, wd, conj=False):
     if conj:
-        def drive_gen_helper(t):
+        def drive_gen_helper(*t):
+            t = t[0]
             return amp_func(t) * np.exp(1j * (((wd - w0) * t) + phase_func(t)))
     else:
-        def drive_gen_helper(t):
+        def drive_gen_helper(*t):
+            t = t[0]
             return amp_func(t) * np.exp(1j * (((w0 - wd) * t) + phase_func(t)))
     return drive_gen_helper
 
@@ -162,6 +195,13 @@ def setup_segs(n_drives, time_start, time_stop, init_amp):
     amp_segs = np.full((n_drives, 1), init_amp)
     return t_segs, amp_segs
 
+def setup_interp_segs(n_drives, time_start, time_stop, init_amp):
+    t_segs = np.empty((n_drives, 1))
+    for i in range(n_drives):
+        t_segs[i] = [(np.random.rand(1)[0] * (time_stop - time_start)) + time_start]
+    amp_segs = np.full((n_drives, 1), init_amp)
+    return interp_time_wrapper(t_segs, time_start, time_stop), amp_segs
+
 
 # Splits up time and amplitudes of time segments after each optimization iteration
 def split_segs(time_mat, amp_mat):
@@ -174,14 +214,67 @@ def split_segs(time_mat, amp_mat):
     time_mat_shape = np.shape(time_mat)
     random_arr = np.random.rand(time_mat_shape[0])
     extend_time_mat = np.empty((time_mat_shape[0], time_mat_shape[1] + 1))
-    extend_amp_mat = np.empty(time_mat_shape)
+    extend_amp_mat = np.empty((time_mat_shape[0], time_mat_shape[1] - 1))
     for i, time_arr in enumerate(time_mat):
         max_index = np.argmax(time_arr[1:] - time_arr[:-1])
-        rand_time = time_arr[max_index] + (random_arr[i] * (time_arr[max_index + 1] - time_arr[max_index]))
-        extend_time_mat[i] = np.insert(time_arr, max_index + 1, rand_time)
-        a = np.insert(amp_mat[i], max_index + 1, amp_mat[i][max_index])
-        extend_amp_mat[i] = a
+        if max_index == 0:
+            rand_time = time_arr[max_index] + (random_arr[i] * (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_time_mat[i] = np.insert(time_arr, max_index + 1, rand_time)
+            a = np.insert(amp_mat[i], max_index + 1, (amp_mat[i][max_index] * (rand_time - time_arr[max_index]) + amp_mat[i][max_index + 1] * (time_arr[max_index + 1] - rand_time)) / (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_amp_mat[i] = a
+        else:
+            rand_time = time_arr[max_index] + (random_arr[i] * (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_time_mat[i] = np.insert(time_arr, max_index + 1, rand_time)
+            a = np.insert(amp_mat[i], max_index + 1, (amp_mat[i][max_index] * (rand_time - time_arr[max_index]) + amp_mat[i][max_index + 1] * (time_arr[max_index + 1] - rand_time)) / (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_amp_mat[i] = a
     return extend_time_mat, extend_amp_mat
+
+# Splits up time and amplitudes of time segments after each optimization iteration
+def split_segs_flat(time_mat, amp_mat):
+    """
+
+    :param time_mat:
+    :param amp_mat:
+    :return:
+    """
+    time_mat_shape = np.shape(time_mat)
+    random_arr = np.random.rand(time_mat_shape[0])
+    extend_time_mat = np.empty((time_mat_shape[0], time_mat_shape[1] + 1))
+    extend_amp_mat = np.empty((time_mat_shape[0], time_mat_shape[1] - 1))
+    for i, time_arr in enumerate(time_mat):
+        max_index = np.argmax(time_arr[1:] - time_arr[:-1])
+        if max_index == 0:
+            rand_time = time_arr[max_index] + (random_arr[i] * (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_time_mat[i] = np.insert(time_arr, max_index + 1, rand_time)
+            a = np.insert(amp_mat[i], max_index + 1, (amp_mat[i][max_index] * (rand_time - time_arr[max_index]) + amp_mat[i][max_index + 1] * (time_arr[max_index + 1] - rand_time)) / (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_amp_mat[i] = a[1:-1]
+        else:
+            rand_time = time_arr[max_index] + (random_arr[i] * (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_time_mat[i] = np.insert(time_arr, max_index + 1, rand_time)
+            a = np.insert(amp_mat[i], max_index + 1, (amp_mat[i][max_index] * (rand_time - time_arr[max_index]) + amp_mat[i][max_index + 1] * (time_arr[max_index + 1] - rand_time)) / (time_arr[max_index + 1] - time_arr[max_index]))
+            extend_amp_mat[i] = a[1:-1]
+    return extend_time_mat, extend_amp_mat
+
+def split_segs_interp(time_mat, amp_mat, ti, tf):
+    zero_row = np.full((np.shape(time_mat)[0], 1), 0)
+    ti_row = np.full((np.shape(time_mat)[0], 1), ti)
+    tf_row = np.full((np.shape(time_mat)[0], 1), tf)
+
+    temp_time_mat = np.append(np.append(ti_row, time_mat, axis=1), tf_row, axis=1)
+    temp_amp_mat = np.append(np.append(zero_row, amp_mat, axis=1), zero_row, axis=1)
+
+    ret_time_mat, ret_amp_mat = split_segs(temp_time_mat, temp_amp_mat)
+
+    return ret_time_mat[:, 1:-1], ret_amp_mat[:, 1:-1]
+
+def interp_time_wrapper(time_mat, ti, tf):
+    ti_row = np.full((np.shape(time_mat)[0], 1), ti)
+    tf_row = np.full((np.shape(time_mat)[0], 1), tf)
+    return np.append(np.append(ti_row, time_mat, axis=1), tf_row, axis=1)
+
+def interp_amp_wrapper(amp_mat):
+    zero_row = np.full((np.shape(amp_mat)[0], 1), 0)
+    return np.append(np.append(zero_row, amp_mat, axis=1), zero_row, axis=1)
 
 
 def amp_by_time(time, time_arr, amp_arr):
@@ -485,6 +578,232 @@ def ti_state_plot(opts, *args):
     plt.title("Evolution of tracked states")
     plt.show()
 
+def sim_interp_cost_eval(opts, *args):
+    if len(args) == 1:
+        args = args[0]
+    num_drives = args[0]
+    drive_ops = args[1]
+    freqs = args[2]
+    H_0 = args[3]
+    init_state = args[4]
+    eval_ops = args[5]
+    options = args[6]
+    output_cost_func = args[7]
+    time_start = args[8]
+    time_stop = args[9]
+    drive_freqs = args[10]
+    drive_elem_nums = args[11]
+    verbose = args[12]
+    plot_trial_pulses = args[13]
+
+    t_arr = np.linspace(time_start, time_stop, 1001)
+
+    amps = opts[:int(len(opts) / 2)]
+    times = opts[int(len(opts) / 2):]
+
+    for i in range(len(times)):
+        if (times[i] <= time_start) or (times[i] >= time_stop):
+            print(f'Times out of bounds: {times[i]}')
+            return 0
+
+    amps = np.round(np.reshape(amps, (num_drives * 2, int(len(amps) / (num_drives * 2)))))
+    t_block_mat = np.reshape(times, (num_drives * 2, int(len(times) / (num_drives * 2))))
+
+    reorder = t_block_mat.argsort()
+
+    for i in range(np.shape(amps)[0]):
+        amps[i] = amps[i][reorder[i]]
+        t_block_mat[i] = t_block_mat[i][reorder[i]]
+
+    start_buffer_arr = time_start * np.ones((2 * num_drives, 1), dtype=np.float32)
+    stop_buffer_arr = time_stop * np.ones((2 * num_drives, 1), dtype=np.float32)
+
+    t_block_mat = np.append(np.append(start_buffer_arr, t_block_mat, axis=1), stop_buffer_arr, axis=1)
+
+    amps = interp_amp_wrapper(amps)
+
+    if verbose:
+        for i in range(num_drives):
+            print(f'Trial I time {i}: {t_block_mat[2 * i]}')
+            print(f'Trial I amp {i}: {amps[2 * i]}')
+            print(f'Trial Q time {i}: {t_block_mat[(2 * i) + 1]}')
+            print(f'Trial Q amp {i}: {amps[(2 * i) + 1]}')
+
+    # Returns a cost of 0 if any times overlap
+    for i in range(np.shape(amps)[0]):
+        for j in range(np.shape(amps)[1] - 1):
+            if t_block_mat[i, j] == t_block_mat[i, j + 1]:
+                print(f'Times overlap: {t_block_mat[i, j]} and {t_block_mat[i, j + 1]}')
+                return 0
+
+    drive_amp_funcs = [
+        [interp_seg(amps[j][i:i + 2], t_block_mat[j][i:i + 2]) for i in range(len(t_block_mat[j]) - 1)] for j
+        in range(num_drives * 2)]
+
+    comp_amp_funcs = [func_sum(np.array(drive_amp_funcs[i])) for i in range(num_drives * 2)]
+
+    # Plot out the amplitudes of the drives
+    if plot_trial_pulses:
+        t_arr = np.linspace(0, t_block_mat[0][-1], 501)
+        for i in range(num_drives):
+            plt.plot(t_arr, comp_amp_funcs[(2 * i)](t_arr), label=f'Drive Re({i})', color=colors(i), linestyle="solid")
+            plt.plot(t_arr, comp_amp_funcs[(2 * i) + 1](t_arr), label=f'Drive Im({i})', color=colors(i),
+                     linestyle="dotted")
+        plt.xlabel("Time")
+        plt.ylabel("Amplitude")
+        plt.title("Drive pulses")
+        plt.legend()
+        save_dir = r'C:\_Data\images\20241208'
+        img_name = time.strftime('%Y%m%d-%H%M%S.png')
+        plt.savefig(os.path.join(save_dir, img_name))
+        print(f'Saved pulse plot to {os.path.join(save_dir, img_name)}')
+        plt.close()
+
+    drive_camps = []
+    for i in range(0, 2 * num_drives, 2):
+        drive_camps.append(iq_to_amp(comp_amp_funcs[i], comp_amp_funcs[i + 1]))
+        drive_camps.append(iq_to_amp(comp_amp_funcs[i], comp_amp_funcs[i + 1], conj=True))
+
+    drive_osc_camps = []
+
+    for i in range(num_drives * 2):
+        drive_osc_camps = [drive_osc_camp(drive_camps[i], zero, freqs[drive_elem_nums[floor(i / 2)]], drive_freqs[floor(i / 2)]) for i in
+                       range(num_drives * 2)]
+
+    if plot_trial_pulses:
+        t_arr = np.linspace(0, t_block_mat[0][-1], 501)
+        for i in range(num_drives):
+            plt.plot(t_arr, np.abs(drive_osc_camps[(2 * i)](t_arr)), label=f'Drive Re({i})', color=colors(i), linestyle="solid")
+            plt.plot(t_arr, np.abs(drive_osc_camps[(2 * i) + 1](t_arr)), label=f'Drive Im({i})', color=colors(i),
+                     linestyle="dotted")
+            print(comp_amp_funcs[(2 * i)](t_arr)[0])
+            print(comp_amp_funcs[(2 * i) + 1](t_arr)[0])
+        plt.xlabel("Time")
+        plt.ylabel("Amplitude")
+        plt.title("Drive pulses")
+        plt.legend()
+        save_dir = r'C:\_Data\images\20241205'
+        img_name = time.strftime('%Y%m%d-%H%M%S.png')
+        plt.savefig(os.path.join(save_dir, img_name))
+        plt.close()
+
+    H_t = [[drive_ops[i], drive_osc_camps[i]] for i in range(len(drive_osc_camps))]
+
+    H = [H_0] + H_t
+    H = QobjEvo(H, tlist=t_arr)
+
+    res = mesolve(H, init_state, t_arr, c_ops=[], e_ops=eval_ops, options=options)
+
+    final_expect = res.expect
+
+    final_dm = res.final_state
+
+    if verbose:
+        print(f'final_dm: {final_dm}')
+
+    cost = np.abs(output_cost_func(final_expect, final_dm))
+
+    if verbose:
+        print(f'Cost: {cost}')
+
+    return cost
+
+def sim_interp_cost_eval_no_time(opts, *args):
+    if len(args) == 1:
+        args = args[0]
+    num_drives = args[0]
+    drive_ops = args[1]
+    freqs = args[2]
+    H_0 = args[3]
+    init_state = args[4]
+    eval_ops = args[5]
+    options = args[6]
+    output_cost_func = args[7]
+    time_start = args[8]
+    time_stop = args[9]
+    drive_freqs = args[10]
+    drive_elem_nums = args[11]
+    verbose = args[12]
+    plot_trial_pulses = args[13]
+    times = args[14]
+
+    options.nsteps = 10000
+
+    t_arr = np.linspace(time_start, time_stop, 1001)
+
+    amps = opts
+
+    amps = np.round(np.reshape(amps, (num_drives * 2, int(len(amps) / (num_drives * 2)))))
+    t_block_mat = np.reshape(times, (num_drives * 2, int(len(times) / (num_drives * 2))))
+
+    start_buffer_arr = time_start * np.ones((2 * num_drives, 1), dtype=np.float32)
+    stop_buffer_arr = time_stop * np.ones((2 * num_drives, 1), dtype=np.float32)
+
+    t_block_mat = np.append(np.append(start_buffer_arr, t_block_mat, axis=1), stop_buffer_arr, axis=1)
+
+    amps = interp_amp_wrapper(amps)
+
+    if verbose:
+        for i in range(num_drives):
+            print(f'Trial I time {i}: {t_block_mat[2 * i]}')
+            print(f'Trial I amp {i}: {amps[2 * i]}')
+            print(f'Trial Q time {i}: {t_block_mat[(2 * i) + 1]}')
+            print(f'Trial Q amp {i}: {amps[(2 * i) + 1]}')
+
+    drive_amp_funcs = [
+        [interp_seg(amps[j][i:i + 2], t_block_mat[j][i:i + 2]) for i in range(len(t_block_mat[j]) - 1)] for j
+        in range(num_drives * 2)]
+
+    comp_amp_funcs = [func_sum(np.array(drive_amp_funcs[i])) for i in range(num_drives * 2)]
+
+    # Plot out the amplitudes of the drives
+    if plot_trial_pulses:
+        t_arr = np.linspace(0, t_block_mat[0][-1], 501)
+        for i in range(num_drives):
+            plt.plot(t_arr, comp_amp_funcs[(2 * i)](t_arr), label=f'Drive Re({i})', color=colors(i), linestyle="solid")
+            plt.plot(t_arr, comp_amp_funcs[(2 * i) + 1](t_arr), label=f'Drive Im({i})', color=colors(i),
+                     linestyle="dotted")
+        plt.xlabel("Time")
+        plt.ylabel("Amplitude")
+        plt.title("Drive pulses")
+        plt.legend()
+        save_dir = r'C:\_Data\images\20241205'
+        img_name = time.strftime('%Y%m%d-%H%M%S.png')
+        plt.savefig(os.path.join(save_dir, img_name))
+        plt.close()
+
+    drive_camps = []
+    for i in range(0, 2 * num_drives, 2):
+        drive_camps.append(iq_to_amp(comp_amp_funcs[i], comp_amp_funcs[i + 1]))
+        drive_camps.append(iq_to_amp(comp_amp_funcs[i], comp_amp_funcs[i + 1], conj=True))
+
+    drive_osc_camps = []
+
+    for i in range(num_drives * 2):
+        drive_osc_camps = [drive_osc_camp(drive_camps[i], zero, freqs[drive_elem_nums[floor(i / 2)]], drive_freqs[floor(i / 2)]) for i in
+                       range(num_drives * 2)]
+
+    H_t = [[drive_ops[i], drive_osc_camps[i]] for i in range(len(drive_osc_camps))]
+
+    H = [H_0] + H_t
+    H = QobjEvo(H, tlist=t_arr)
+
+    res = mesolve(H, init_state, t_arr, c_ops=[], e_ops=eval_ops, options=options)
+
+    final_expect = res.expect
+
+    final_dm = res.final_state
+
+    if verbose:
+        print(f'final_dm: {final_dm}')
+
+    cost = np.abs(output_cost_func(final_expect, final_dm))
+
+    if verbose:
+        print(f'Cost: {cost}')
+
+    return cost
+
 def ti_cost_eval(opts, *args):
     num_drives = args[0]
     num_elems = args[1]
@@ -543,6 +862,197 @@ def ti_cost_eval(opts, *args):
 
     return cost
 
+
+# def sim_interp_cost_eval(opts, *args):
+#     num_drives = args[0]
+#     drive_ops = args[1]
+#     w0_arr = args[2]
+#     H_0 = args[3]
+#     init_state = args[4]
+#     t_arr = args[5]
+#     eval_ops = args[6]
+#     options = args[7]
+#     output_cost_func = args[8]
+#     verbose = args[9]
+#     drive_freqs = args[10]
+#     drive_elem_nums = args[11]
+#     # print(f'drive_freqs: {drive_freqs}')
+#
+#     # amps = np.round(np.reshape(amps, (num_drives * 2, int(len(amps) / (num_drives * 2)))))
+#     # freqs = opts[-num_drives:]
+#
+#     time_start = t_arr[0]
+#     time_stop = t_arr[-1]
+#     amps_times = opts[:-num_drives]
+#     amps = amps_times[:int(len(amps_times) / 2)]
+#     times = amps_times[int(len(amps_times) / 2):]
+#     freqs = w0_arr
+#
+#     for i in range(len(times)):
+#         if (times[i] <= time_start) or (times[i] >= time_stop):
+#             return 0
+#
+#     amps = np.round(np.reshape(amps, (num_drives * 2, int(len(amps) / (num_drives * 2)))))
+#     t_block_mat = np.reshape(times, (num_drives * 2, int(len(times) / (num_drives * 2))))
+#
+#     reorder = t_block_mat.argsort()
+#
+#     for i in range(np.shape(amps)[0]):
+#         amps[i] = amps[i][reorder[i]]
+#         t_block_mat[i] = t_block_mat[i][reorder[i]]
+#
+#     start_buffer_arr = time_start * np.ones((2 * num_drives, 1), dtype=np.float32)
+#     stop_buffer_arr = time_stop * np.ones((2 * num_drives, 1), dtype=np.float32)
+#
+#     t_block_mat = np.append(np.append(start_buffer_arr, t_block_mat, axis=1), stop_buffer_arr, axis=1)
+#
+#     amps = interp_amp_wrapper(amps)
+#
+#     if verbose:
+#         for i in range(num_drives):
+#             print(f'Trial I time {i}: {t_block_mat[2 * i]}')
+#             print(f'Trial I amp {i}: {amps[2 * i]}')
+#             print(f'Trial Q time {i}: {t_block_mat[(2 * i) + 1]}')
+#             print(f'Trial Q amp {i}: {amps[(2 * i) + 1]}')
+#             print(f'Trial freq {i}: {drive_freqs[i]}')
+#
+#     # Returns a cost of 0 if any times overlap
+#     for i in range(np.shape(amps)[0]):
+#         for j in range(np.shape(amps)[1] - 1):
+#             if t_block_mat[i, j] == t_block_mat[i, j + 1]:
+#                 print(f'Times overlap: {t_block_mat[i, j]} and {t_block_mat[i, j + 1]}')
+#                 return 0
+#
+#     # drive_amp_funcs = []
+#
+#     # for i in range(num_drives * 2):
+#     #     t_arr = []
+#     #     for j in range(len(t_block_mat[j]) - 1):
+#     #         t_arr.append(interp_seg(amps[j][i:i + 2], t_block_mat[j][i:i + 2]))
+#
+#
+#     drive_amp_funcs = [
+#         [interp_seg(amps[j][i:i + 2], t_block_mat[j][i:i + 2]) for i in range(len(t_block_mat[j]) - 1)] for j
+#         in range(num_drives * 2)]
+#
+#     comp_amp_funcs = [func_sum(np.array(drive_amp_funcs[i])) for i in range(num_drives * 2)]
+#
+#     drive_camps = []
+#     for i in range(0, 2 * num_drives, 2):
+#         drive_camps.append(iq_to_amp(comp_amp_funcs[i], comp_amp_funcs[i + 1]))
+#         drive_camps.append(iq_to_amp(comp_amp_funcs[i], comp_amp_funcs[i + 1], conj=True))
+#
+#     drive_osc_camps = []
+#
+#     for i in range(num_drives * 2):
+#         drive_osc_camps = [drive_osc_camp(drive_camps[i], zero, w0_arr[drive_elem_nums[floor(i / 2)]], drive_freqs[floor(i / 2)]) for i in
+#                        range(num_drives * 2)]
+#
+#     H_t = [[drive_ops[i], drive_osc_camps[i]] for i in range(len(drive_osc_camps))]
+#
+#     H = [H_0] + H_t
+#     H = QobjEvo(H, tlist=t_arr)
+#
+#     res = mesolve(H, init_state, t_arr, c_ops=[], e_ops=eval_ops, options=options)
+#
+#     final_expect = res.expect
+#
+#     final_dm = res.final_state
+#
+#     if verbose:
+#         print(f'final_dm: {final_dm}')
+#
+#     cost = np.abs(output_cost_func(final_expect, final_dm))
+#
+#     if verbose:
+#         print(f'Cost: {cost}')
+#
+#     return cost
+
+
+def sim_interp_ti_cost_eval(opts, *args):
+    num_drives = args[0]
+    drive_ops = args[1]
+    w0_arr = args[2]
+    H_0 = args[3]
+    init_state = args[4]
+    t_arr = args[5]
+    eval_ops = args[6]
+    options = args[7]
+    output_cost_func = args[8]
+    verbose = args[9]
+    element_ops = args[10]
+    t_step = args[11]
+
+    time_start = t_arr[0]
+    time_stop = t_arr[-1]
+    amps_times = opts[:-num_drives]
+    amps = amps_times[:int(len(amps_times) / 2)]
+    times = amps_times[int(len(amps_times) / 2):]
+    freqs = w0_arr
+
+    amps = np.round(np.reshape(amps, (num_drives * 2, int(len(amps) / (num_drives * 2)))))
+    t_block_mat = np.reshape(times, (num_drives * 2, int(len(times) / (num_drives * 2))))
+
+    reorder = t_block_mat.argsort()
+
+    for i in range(np.shape(amps)[0]):
+        amps[i] = amps[i][reorder[i]]
+        t_block_mat[i] = t_block_mat[i][reorder[i]]
+
+    start_buffer_arr = time_start * np.ones((2 * num_drives, 1), dtype=np.float32)
+    stop_buffer_arr = time_stop * np.ones((2 * num_drives, 1), dtype=np.float32)
+
+    t_block_mat = np.append(np.append(start_buffer_arr, t_block_mat, axis=1), stop_buffer_arr, axis=1)
+
+    amps = interp_amp_wrapper(amps)
+
+    # if num_drives == 0:
+    #     amp_mat = np.reshape(opts, (num_drives * 2, int(len(opts) / (2 * num_drives))))
+    #     drive_freqs = []
+    # else:
+    #     amp_mat = np.reshape(opts[:-num_elems], (num_drives * 2, int((len(opts) - num_elems) / (2 * num_drives))))
+    #     drive_freqs = opts[-num_elems:]
+
+    if verbose:
+        for i in range(num_drives):
+            print(f'Trial I time {i}: {t_block_mat[2 * i]}')
+            print(f'Trial I amp {i}: {amps[2 * i]}')
+            print(f'Trial Q time {i}: {t_block_mat[(2 * i) + 1]}')
+            print(f'Trial Q amp {i}: {amps[(2 * i) + 1]}')
+            print(f'Trial freq {i}: {freqs[i]}')
+
+    # Convert to numpy arrays:
+    # drive_ops = np.array(drive_ops)
+    freqs = np.array(freqs)
+    # element_ops = np.array(element_ops)
+    freqs = np.array(freqs)
+
+    split_times, split_amps = ti_sim_seg_split(t_block_mat, amps)
+
+    drive_op_amps = iqs_to_camps(split_amps) * 2 * np.pi
+
+    # Setting up Hamiltonian
+    H_r = assemble_ti_hamil(H_0, element_ops, (freqs - freqs))
+
+    options.store_states = True
+    # options["rhs_reuse"] = False
+
+    # Simulate
+    final_expect, final_dm = piecewise_mesolve(H_r, init_state, split_times, t_step, drive_ops, drive_op_amps, c_ops, eval_ops,
+                                   options, False)
+
+    cost = np.abs(output_cost_func(final_expect, final_dm))
+
+    # clear_output(wait=False)
+
+    # cost = round(cost, 6)  # + np.abs(np.sum(np.sqrt(np.power(i_amps, 2) + np.power(q_amps, 2))) / 100000000)
+    if verbose:
+        print(f'Cost: {cost}')
+
+    return cost
+
+
 def cost_qubit_x(final_state):
     return 1 - final_state[0]
 
@@ -572,3 +1082,223 @@ def drive_pulse_hist_plot(time_hist, amp_hist, legend=True):
     if legend:
         plt.legend()
     plt.show()
+
+def exp_interp_shape_plot(opts, *args):
+    drive_chs = args[0]
+    plot_opt_pulses = args[2]
+    time_start = args[4]
+    time_stop = args[5]
+
+    num_drives = len(drive_chs)
+    amps_times = opts[:-num_drives]
+    amps = amps_times[:int(len(amps_times) / 2)]
+    times = amps_times[int(len(amps_times) / 2):]
+    freqs = opts[-num_drives:]
+
+    amps = np.round(np.reshape(amps, (num_drives * 2, int(len(amps) / (num_drives * 2)))))
+    t_block_mat = np.reshape(times, (num_drives * 2, int(len(times) / (num_drives * 2))))
+
+    reorder = t_block_mat.argsort()
+
+    for i in range(np.shape(amps)[1]):
+        amps[i] = amps[i][reorder[i]]
+        t_block_mat[i] = t_block_mat[i][reorder[i]]
+
+    start_buffer_arr = time_start * np.ones((2 * num_drives, 1), dtype=np.float32)
+    stop_buffer_arr = time_stop * np.ones((2 * num_drives, 1), dtype=np.float32)
+
+    t_block_mat = np.append(np.append(start_buffer_arr, t_block_mat, axis=1), stop_buffer_arr, axis=1)
+
+    amps = interp_amp_wrapper(amps)
+
+    drive_amp_funcs = [
+        [interp_seg(amps[j][i:i+2], t_block_mat[j][i:i+2]) for i in range(len(t_block_mat[j]) - 1)] for j
+        in range(num_drives * 2)]
+
+    comp_amp_funcs = [func_sum(np.array(drive_amp_funcs[i])) for i in range(num_drives * 2)]
+
+    # Plot out the amplitudes of the drives
+    t_arr = np.linspace(0, t_block_mat[0][-1], 501)
+    for i in range(num_drives):
+        plt.plot(t_arr, comp_amp_funcs[(2 * i)](t_arr), label=f'Drive Re({i})', color=colors(i), linestyle="solid")
+        plt.plot(t_arr, comp_amp_funcs[(2 * i) + 1](t_arr), label=f'Drive Im({i})', color=colors(i),
+                 linestyle="dotted")
+        print(comp_amp_funcs[(2 * i)](t_arr)[0])
+        print(comp_amp_funcs[(2 * i) + 1](t_arr)[0])
+    plt.xlabel("Time")
+    plt.ylabel("Amplitude")
+    plt.title("Drive pulses")
+    plt.legend()
+    plt.show()
+
+def exp_interp_pulse_plot(opts, *args):
+    # setup
+    config_dict = pc.config_dict
+
+    # Build local connection
+    Pyro4.config.SERIALIZER = "pickle"
+    Pyro4.config.PICKLE_PROTOCOL_VERSION = 4
+
+    # IP address of the QICK board
+    ns_host = "192.168.20.101"
+    ns_port = 8888
+    proxy_name = "myqick"
+
+    ns = Pyro4.locateNS(host=ns_host, port=ns_port)
+
+    soc = Pyro4.Proxy(ns.lookup(proxy_name))
+    soccfg = QickConfig(soc.get_cfg())
+
+    # actual code
+    drive_chs = args[0]
+    time_start = args[4]
+    time_stop = args[5]
+
+    num_drives = len(drive_chs)
+    amps_times = opts[:-num_drives]
+    amps = amps_times[:int(len(amps_times) / 2)]
+    times = amps_times[int(len(amps_times) / 2):]
+    freqs = opts[-num_drives:]
+
+    amps = np.round(np.reshape(amps, (num_drives * 2, int(len(amps) / (num_drives * 2)))))
+    t_block_mat = np.reshape(times, (num_drives * 2, int(len(times) / (num_drives * 2))))
+
+    reorder = t_block_mat.argsort()
+
+    for i in range(np.shape(amps)[1]):
+        amps[i] = amps[i][reorder[i]]
+        t_block_mat[i] = t_block_mat[i][reorder[i]]
+
+    start_buffer_arr = time_start * np.ones((2 * num_drives, 1), dtype=np.float32)
+    stop_buffer_arr = time_stop * np.ones((2 * num_drives, 1), dtype=np.float32)
+
+    t_block_mat = np.append(np.append(start_buffer_arr, t_block_mat, axis=1), stop_buffer_arr, axis=1)
+
+    amps = interp_amp_wrapper(amps)
+
+    drive_amp_funcs = [
+        [interp_seg(amps[j][i:i+2], t_block_mat[j][i:i+2]) for i in range(len(t_block_mat[j]) - 1)] for j
+        in range(num_drives * 2)]
+
+    comp_amp_funcs = [func_sum(np.array(drive_amp_funcs[i])) for i in range(num_drives * 2)]
+
+    # qick program stuff
+    config = copy.deepcopy(pc.config_dict)
+
+    expt_dict = {
+        "reps": 1000,  # inner repeat times
+        "rounds": 1,  # outer loop times
+        "soft_avg": 1,  # soft average (only for decimated readout)
+        "expts": 1,  # parameters sweep
+        "hdf5": "pi-opt",
+    }
+    config["expt"] = expt_dict
+
+    measure_state = "g"
+    storage = "B"
+
+    # Modify eval_dict to work for this experiment
+    config["eval"]["coeffs"] = [1, -1]
+    config["eval"]["norm_amp"] = 1
+    config["eval"]["background_amp"] = 0
+    config["eval"]["measure_state"] = measure_state
+
+    config["readout"]["relax_delay"] = 1000
+
+    config["res"]["freq"] = config["res"]["freqs"][measure_state]
+
+    observable_dicts = [
+        [
+            pc.pi_pulse(rabi_states="ef", meas_state=measure_state),
+        ],
+        [
+            pc.pi_pulse(rabi_states="ef", meas_state=measure_state),
+            pc.pi_pulse(rabi_states="ge", meas_state=measure_state, selective=True,
+                        freq=config_dict["qubit"]["freqs"]["g"]["ge"] + config_dict["storage_A"][
+                            "chi"] + config_dict["storage_B"]["chi"]),
+        ],
+    ]
+
+    normVolt = ArbHamiltonianEval(soc=soc, soccfg=soccfg, config=config, observable_dicts=observable_dicts)
+
+    # calculate drive amps for all times that the tprocessor will run for
+    spread_drive_amps = []
+    for i in range(num_drives):
+        spread_drive_amps.append(
+            qick_spread_pulse_amps(soccfg, t_block_mat[2 * i], comp_amp_funcs[2 * i], drive_chs[i]))
+        spread_drive_amps.append(
+            qick_spread_pulse_amps(soccfg, t_block_mat[(2 * i) + 1], comp_amp_funcs[(2 * i) + 1], drive_chs[i]))
+
+    spread_drive_amps = np.round(spread_drive_amps).astype(int)
+
+    for i, ch in enumerate(drive_chs):
+        gencfg = soccfg['gens'][ch]
+
+        normVolt.add_test_waveform(ch, {
+            "name": f'test_wf_{i}',
+            "I": spread_drive_amps[2 * i],
+            "Q": spread_drive_amps[(2 * i) + 1],
+            "gain": int(gencfg['maxv'] * gencfg['maxv_scale']),
+            "freq": freqs[i],
+            "phase": 0,
+            "t": 'auto'  # soccfg.us2cycles(gen_ch=ch, us=0.05) + 16,
+        })
+
+    for i in range(len(observable_dicts)):
+        normVolt.pulse_view(title="e EF contrast", n=i)
+
+# Fits data to a sin curve TODO: have func return figure instead of instantly plotting
+def sin_fit(x, y):
+    def sin_helper(t, A, w, d, C):
+        return (A * np.sin((t * w) - d)) + C
+
+    min_amp = min(y)
+    max_amp = max(y)
+    mid_amp = (min_amp + max_amp) / 2
+    disp_amp = max_amp - mid_amp
+
+    p0 = [disp_amp, 2 * np.pi / (x[-1] - x[0]), np.arctan2(y[0], disp_amp), mid_amp]
+
+    popt, pcorr = curve_fit(sin_helper, x, y, p0=p0)
+
+    print(f'popt: {popt}')
+
+    print(f'pi_amp: {round(2 * np.pi / popt[1])}')
+
+    plt.plot(x, y, label="Data")
+    plt.plot(x, sin_helper(x, *popt), label="Fit")
+    plt.legend()
+    plt.show()
+
+def SSR_map(i_vals, q_vals, g_blob, e_blob):
+    i_vals = np.array(i_vals)
+    q_vals = np.array(q_vals)
+
+    gd_i = i_vals - g_blob[0]
+    gd_q = q_vals - g_blob[1]
+
+    ed_i = i_vals - e_blob[0]
+    ed_q = q_vals - e_blob[1]
+
+    g_dist = np.sqrt(np.power(gd_i, 2) + np.power(gd_q, 2))
+    e_dist = np.sqrt(np.power(ed_i, 2) + np.power(ed_q, 2))
+
+    ret_arr = np.zeros(len(i_vals))
+
+    ret_arr[e_dist < g_dist] = 1
+
+    return ret_arr
+
+def rabi_fit(params, x, data):
+    '''
+
+    parameters:
+       ofs
+       amp
+       period
+    '''
+
+    cosine = np.cos(2 * np.pi * x / params['period'].value)
+
+    est = params['ofs'].value + params['amp'].value * cosine
+    return data - est

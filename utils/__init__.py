@@ -1,5 +1,7 @@
 from utils.operations import *
 from utils.pulse_sequences import *
+# from utils.opt_utils import *
+from utils.pulse_configs import *
 from typing import Dict
 
 class ConfigObj(object):
